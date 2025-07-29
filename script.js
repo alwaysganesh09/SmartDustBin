@@ -12,7 +12,7 @@ let isScannerActive = false; // Flag to track scanner state
 // ✅ IMPORTANT: Define the exact content of your 'frame.png' QR code.
 //    This is the string that Google Lens (or any scanner) shows.
 //    YOU MUST ENSURE THIS MATCHES EXACTLY!
-const EXPECTED_FRAME_QR_CONTENT = 'https://dustbin-reward.com/user123'; 
+const EXPECTED_FRAME_QR_CONTENT = 'https://qrco.de/bgBWbc'; 
 
 
 // Default coupons (hardcoded for standalone frontend)
