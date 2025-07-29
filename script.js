@@ -1,5 +1,3 @@
-// script.js
-
 // --- Local Storage Keys ---
 const LS_USERS_KEY = 'smartDustbinUsers';
 const LS_LOGGED_IN_USER_KEY = 'smartDustbinLoggedInUser'; // Stores username of logged-in user
@@ -10,9 +8,12 @@ let html5QrCodeScanner = null; // Html5Qrcode instance
 let isScannerActive = false; // Flag to track scanner state
 
 // ✅ IMPORTANT: Define the exact content of your 'frame.png' QR code.
-//    This is the string that Google Lens (or any scanner) shows.
-//    YOU MUST ENSURE THIS MATCHES EXACTLY!
-const EXPECTED_FRAME_QR_CONTENT = 'https://qrco.de/bgBWbc'; 
+//    This is the string that Google Lens (or any scanner) shows.
+//    YOU MUST ENSURE THIS MATCHES EXACTLY!
+const EXPECTED_FRAME_QR_CONTENT = 'https://qrco.de/bgBWbc';
+
+// Define the cooldown period in milliseconds (10 minutes = 10 * 60 * 1000)
+const QR_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
 
 
 // Default coupons (hardcoded for standalone frontend)
@@ -77,6 +78,10 @@ function checkLoginStatus() {
         const users = loadUsersFromLocalStorage();
         currentUser = users.find(u => u.username === loggedInUsername);
         if (currentUser) {
+            // Ensure scannedQRCodes is initialized with structure if not present
+            if (!currentUser.scannedQRCodes) {
+                currentUser.scannedQRCodes = [];
+            }
             updateUI(); // Update UI with logged-in user data
             authModal.style.display = 'none'; // Hide modal if logged in
             console.log(`User '${loggedInUsername}' logged in.`);
@@ -121,6 +126,10 @@ async function handleLogin(event) {
 
     if (user && user.password === password) { // Simplified password check for frontend-only
         currentUser = user;
+        // Ensure scannedQRCodes is initialized with structure if not present
+        if (!currentUser.scannedQRCodes) {
+            currentUser.scannedQRCodes = [];
+        }
         localStorage.setItem(LS_LOGGED_IN_USER_KEY, username);
         updateUI();
         authModal.style.display = 'none';
@@ -159,7 +168,7 @@ async function handleRegister(event) {
             points: 100, // Welcome bonus
             pointsHistory: [{ action: 'welcome_bonus', points: 100, description: 'Welcome bonus', timestamp: new Date().toISOString() }],
             redeemedCoupons: [],
-            scannedQRCodes: [] // To track which QR IDs this user has scanned
+            scannedQRCodes: [] // To track which QR IDs this user has scanned (with timestamps)
         };
         users.push(newUser);
         saveUsersToLocalStorage(users);
@@ -192,7 +201,7 @@ function logout() {
  * Updates the UI elements with current user data.
  */
 function updateUI() {
-    const user = currentUser || { username: 'Guest', points: 0, pointsHistory: [], redeemedCoupons: [] };
+    const user = currentUser || { username: 'Guest', points: 0, pointsHistory: [], redeemedCoupons: [], scannedQRCodes: [] };
 
     document.getElementById('userName').innerText = user.username;
     document.getElementById('userPoints').innerText = user.points;
@@ -368,19 +377,40 @@ async function handleQRScan(decodedText) {
             return;
         }
 
-        // Check if THIS SPECIFIC EXPECTED_FRAME_QR_CONTENT has already been scanned by this user
-        // This ensures a user can only scan this specific QR code once.
-        if (currentUser.scannedQRCodes.includes(qrIdForTracking)) {
-            showToast("You have already used this specific QR code! You cannot scan it again.", "warning");
-            console.warn(`Expected QR content '${qrIdForTracking}' already scanned by ${currentUser.username}`);
-            return;
+        // Find if this specific QR code has been scanned before by this user
+        const scannedQrEntry = currentUser.scannedQRCodes.find(entry => entry.qrId === qrIdForTracking);
+        const currentTime = Date.now();
+
+        if (scannedQrEntry) {
+            // QR code was previously scanned
+            const timeSinceLastScan = currentTime - scannedQrEntry.lastScannedAt;
+
+            if (timeSinceLastScan < QR_SCAN_COOLDOWN_MS) {
+                // Still within cooldown period
+                const remainingTimeMs = QR_SCAN_COOLDOWN_MS - timeSinceLastScan;
+                const remainingMinutes = Math.ceil(remainingTimeMs / (1000 * 60));
+                showToast(`You have already scanned this QR code recently. Please wait ${remainingMinutes} more minute(s).`, "warning");
+                console.warn(`Expected QR content '${qrIdForTracking}' already scanned by ${currentUser.username} and still on cooldown.`);
+                return;
+            } else {
+                // Cooldown period has passed, allow re-scan
+                scannedQrEntry.lastScannedAt = currentTime; // Update timestamp
+                showToast("QR code re-scanned after cooldown!", "success");
+            }
+        } else {
+            // First time scanning this QR code for this user
+            currentUser.scannedQRCodes.push({
+                qrId: qrIdForTracking,
+                lastScannedAt: currentTime
+            });
+            showToast("First scan successful!", "success");
         }
 
+
         // ✅ FIXED POINTS EARNED: Always add 10 points
-        const pointsEarned = 10; 
+        const pointsEarned = 10;
 
         currentUser.points += pointsEarned;
-        currentUser.scannedQRCodes.push(qrIdForTracking); // Mark the specific QR as used by this user
         currentUser.pointsHistory.push({
             action: 'qr_scan',
             points: pointsEarned,
@@ -415,13 +445,13 @@ async function generateDemoQR() {
         demoQRContainer.innerHTML = ''; // Clear previous QR
 
         // 20% chance to generate the EXPECTED_FRAME_QR_CONTENT for testing the successful path
-        const isExpectedQrTime = Math.random() < 0.2; 
-        const qrContentToGenerate = isExpectedQrTime 
-            ? EXPECTED_FRAME_QR_CONTENT 
+        const isExpectedQrTime = Math.random() < 0.2;
+        const qrContentToGenerate = isExpectedQrTime
+            ? EXPECTED_FRAME_QR_CONTENT
             : `https://dustbin-reward.com/test_user_${Date.now()}`; // A different URL for testing rejection
 
         // Points for demo QR (fixed at 10 for consistency)
-        const pointsForDemo = 10; 
+        const pointsForDemo = 10;
 
         // Using qrcode.js library to generate QR code on client side
         new QRCode(demoQRContainer, {
@@ -435,7 +465,7 @@ async function generateDemoQR() {
 
         const infoDiv = document.createElement('div');
         infoDiv.innerHTML = `<p>Scan this QR to add points!</p>
-                             <p style="font-size:0.8em; color:#666;">(Content: ${qrContentToGenerate.substring(0,35)}...)</p>
+                             <p style="font-size:0.8em; color:#666;">(Content: ${qrContentToGenerate.substring(0, 35)}...)</p>
                              <p style="font-size:0.9em; font-weight:bold; color: ${isExpectedQrTime ? 'green' : 'orange'};">
                                  ${isExpectedQrTime ? 'This is the *correct* Dust Bin QR!' : 'This is a *test* QR (will be rejected).'}
                              </p>`;
