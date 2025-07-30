@@ -52,6 +52,8 @@ async function initApp() {
 function setupEventListeners() {
     loginForm?.addEventListener('submit', handleLogin);
     registerForm?.addEventListener('submit', handleRegister);
+    document.getElementById('forgotPasswordForm')?.addEventListener('submit', handleForgotPassword);
+    document.getElementById('passwordResetForm')?.addEventListener('submit', handlePasswordReset);
 }
 
 /**
@@ -59,17 +61,24 @@ function setupEventListeners() {
  */
 function handleAuthStateChange() {
     supabase.auth.onAuthStateChange(async (event, session) => {
-        if (event === 'SIGNED_IN' && session) {
+        if (event === "PASSWORD_RECOVERY") {
+            // User arrived from a password reset link, show the reset page
+            showPage('resetPassword');
+        } else if (event === 'SIGNED_IN' && session) {
             console.log('User signed in:', session.user.id);
             await loadUserProfile(session.user);
             authModal.style.display = 'none';
+            document.getElementById('forgotPasswordModal').style.display = 'none';
             showPage('dashboard');
         } else if (event === 'SIGNED_OUT') {
             console.log('User signed out.');
             currentUserProfile = null;
             updateUIForGuest();
-            authModal.style.display = 'flex';
-            showPage('dashboard');
+            // Do not show the authModal automatically on logout if the user is on the reset page
+            if (!window.location.hash.includes('access_token')) {
+                authModal.style.display = 'flex';
+                showPage('dashboard');
+            }
         }
     });
 }
@@ -127,7 +136,7 @@ async function handleRegister(event) {
 
         if (error) throw error;
 
-        showToast('Registration successful! Please check your email to verify your account.', 'success');
+        showToast('Registration successful!', 'success');
         // The onAuthStateChange listener will handle the rest
     } catch (error) {
         console.error('Registration error:', error.message);
@@ -144,8 +153,6 @@ async function handleLogin(event) {
     event.preventDefault();
     showLoading();
 
-    // The login form uses a "username" field, but Supabase auth uses email.
-    // We will treat the input as an email.
     const email = document.getElementById('loginUsername').value;
     const password = document.getElementById('loginPassword').value;
 
@@ -180,6 +187,78 @@ async function logout() {
     // onAuthStateChange handles UI update
     hideLoading();
 }
+
+// --- New Password Feature Functions ---
+
+function togglePasswordVisibility(inputId, iconId) {
+    const passwordInput = document.getElementById(inputId);
+    const icon = document.getElementById(iconId);
+    if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        icon.classList.remove('fa-eye');
+        icon.classList.add('fa-eye-slash');
+    } else {
+        passwordInput.type = 'password';
+        icon.classList.remove('fa-eye-slash');
+        icon.classList.add('fa-eye');
+    }
+}
+
+function showForgotPasswordModal() {
+    document.getElementById('authModal').style.display = 'none';
+    document.getElementById('forgotPasswordModal').style.display = 'flex';
+}
+
+function hideForgotPasswordModal() {
+    document.getElementById('forgotPasswordModal').style.display = 'none';
+    document.getElementById('authModal').style.display = 'flex';
+}
+
+async function handleForgotPassword(event) {
+    event.preventDefault();
+    showLoading();
+    const email = document.getElementById('resetEmail').value;
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split('#')[0], // Redirects to the current page without the hash
+    });
+
+    hideLoading();
+    if (error) {
+        showToast(error.message, 'error');
+    } else {
+        showToast('Password reset link sent! Check your email.', 'success');
+        document.getElementById('forgotPasswordModal').style.display = 'none';
+    }
+}
+
+async function handlePasswordReset(event) {
+    event.preventDefault();
+    showLoading();
+    const newPassword = document.getElementById('newPassword').value;
+
+    if (newPassword.length < 6) {
+        showToast('Password must be at least 6 characters long.', 'warning');
+        hideLoading();
+        return;
+    }
+
+    const { error } = await supabase.auth.updateUser({
+        password: newPassword
+    });
+
+    hideLoading();
+    if (error) {
+        showToast(error.message, 'error');
+    } else {
+        showToast('Password updated successfully! Please log in.', 'success');
+        // Clear the URL hash and show the login modal
+        window.location.hash = '';
+        showPage('dashboard');
+        authModal.style.display = 'flex';
+    }
+}
+
 
 // --- UI Updates ---
 
